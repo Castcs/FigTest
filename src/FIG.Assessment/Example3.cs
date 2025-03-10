@@ -57,7 +57,7 @@ public class DailyReportService : BackgroundService
             await Task.WhenAll(newUsersTask, deactivatedUsersTask); // run both queries in parallel to save time
 
             // send report to execs, .Result can be blocking, but we already awaited the tasks
-            await this.SendUserReportAsync(newUsersTask.Result, deactivatedUsersTask.Result);
+            await SendUserReportAsync(await newUsersTask, await deactivatedUsersTask);
 
             // save the current time, wait until next midnight, and run the report again - using the new cutoff date
             startingFrom = DateTime.Now;
