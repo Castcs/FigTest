@@ -101,6 +101,7 @@ public class Example1
                 if (!response.IsSuccessStatusCode)
                 {
                     _logger.LogWarning($"Request for ID {id} info failed with code {response.StatusCode}");
+                    continue; // try another ID instead of stopping entirely
                 }
 
                 var age = int.Parse(await response.Content.ReadAsStringAsync());
