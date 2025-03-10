@@ -16,11 +16,12 @@ namespace FIG.Assessment;
 public class Example2 : Controller
 {
 
-    private readonly PasswordHasher<string> _hasher = new();
+    private readonly PasswordHasher<string> _hasher;
     private readonly Example2Context _dbContext;
 
-    public Example2(Example2Context dbContext)
+    public Example2(Example2Context dbContext, PasswordHasher<string> hasher)
     {
+        _hasher = hasher;
         _dbContext = dbContext;
     }
 

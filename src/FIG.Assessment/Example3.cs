@@ -8,6 +8,10 @@ namespace FIG.Assessment;
 /// In this example, we are writing a service that will run (potentially as a windows service or elsewhere) and once a day will run a report on all new
 /// users who were created in our system within the last 24 hours, as well as all users who deactivated their account in the last 24 hours. We will then
 /// email this report to the executives so they can monitor how our user base is growing.
+/// 
+/// 
+/// https://learn.microsoft.com/en-us/aspnet/core/fundamentals/host/hosted-services?view=aspnetcore-5.0&tabs=visual-studio
+/// https://learn.microsoft.com/en-us/dotnet/core/extensions/scoped-service
 /// </summary>
 public class Example3
 {
@@ -20,7 +24,7 @@ public class Example3
                 {
                     options.UseSqlServer("dummy-connection-string");
                 });
-                services.AddSingleton<ReportEngine>();
+                services.AddScoped<ReportEngine>();
                 services.AddHostedService<DailyReportService>();
             })
             .Build()
@@ -30,9 +34,12 @@ public class Example3
 
 public class DailyReportService : BackgroundService
 {
-    private readonly ReportEngine _reportEngine;
+    private readonly IServiceScopeFactory _factory;
 
-    public DailyReportService(ReportEngine reportEngine) => _reportEngine = reportEngine;
+    public DailyReportService(IServiceScopeFactory factory)
+    {
+        _factory = factory;
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -41,16 +48,21 @@ public class DailyReportService : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            var newUsersTask = this._reportEngine.GetNewUsersAsync(startingFrom);
-            var deactivatedUsersTask = this._reportEngine.GetDeactivatedUsersAsync(startingFrom);
+            // report engine is a service for this background service
+            var scope = _factory.CreateScope();
+            var reportEngine = scope.ServiceProvider.GetRequiredService<ReportEngine>();
+
+            var newUsersTask = reportEngine.GetNewUsersAsync(startingFrom);
+            var deactivatedUsersTask = reportEngine.GetDeactivatedUsersAsync(startingFrom);
             await Task.WhenAll(newUsersTask, deactivatedUsersTask); // run both queries in parallel to save time
 
-            // send report to execs
-            await this.SendUserReportAsync(newUsersTask.Result, deactivatedUsersTask.Result);
+            // send report to execs, .Result can be blocking, but we already awaited the tasks
+            await SendUserReportAsync(await newUsersTask, await deactivatedUsersTask);
 
-            // save the current time, wait 24hr, and run the report again - using the new cutoff date
+            // save the current time, wait until next midnight, and run the report again - using the new cutoff date
             startingFrom = DateTime.Now;
-            await Task.Delay(TimeSpan.FromHours(24));
+            var nextMidnight = startingFrom.Date.AddDays(1) - startingFrom;
+            await Task.Delay(nextMidnight, stoppingToken);
         }
     }
 
@@ -73,15 +85,17 @@ public class ReportEngine
 
     public async Task<IEnumerable<User>> GetNewUsersAsync(DateTime startingFrom)
     {
-        var newUsers = (await this._db.Users.ToListAsync())
-            .Where(u => u.CreatedAt > startingFrom);
+        var newUsers = await this._db.Users
+            .Where(u => u.CreatedAt > startingFrom)
+            .ToListAsync();
         return newUsers;
     }
 
     public async Task<IEnumerable<User>> GetDeactivatedUsersAsync(DateTime startingFrom)
     {
-        var deactivatedUsers = (await this._db.Users.ToListAsync())
-            .Where(u => u.DeactivatedAt > startingFrom);
+        var deactivatedUsers = await this._db.Users
+                .Where(u => u.DeactivatedAt > startingFrom)
+                .ToListAsync();
         return deactivatedUsers;
     }
 }
