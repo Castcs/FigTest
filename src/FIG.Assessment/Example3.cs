@@ -1,6 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace FIG.Assessment;
 
@@ -18,6 +19,11 @@ public class Example3
     public static void Main(string[] args)
     {
         Host.CreateDefaultBuilder(args)
+            .ConfigureLogging(logging =>
+            {
+                logging.ClearProviders();
+                logging.AddConsole();
+            })
             .ConfigureServices(services =>
             {
                 services.AddDbContext<MyContext>(options =>
@@ -35,10 +41,12 @@ public class Example3
 public class DailyReportService : BackgroundService
 {
     private readonly IServiceScopeFactory _factory;
+    private readonly ILogger<DailyReportService> _logger;
 
-    public DailyReportService(IServiceScopeFactory factory)
+    public DailyReportService(IServiceScopeFactory factory, ILogger<DailyReportService> logger)
     {
         _factory = factory;
+        _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -48,27 +56,44 @@ public class DailyReportService : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            // report engine is a service for this background service
-            var scope = _factory.CreateScope();
-            var reportEngine = scope.ServiceProvider.GetRequiredService<ReportEngine>();
+            try
+            {
+                _logger.LogInformation("Initiating Report Generation...");
+                // report engine is a service for this background service
+                var scope = _factory.CreateScope();
+                var reportEngine = scope.ServiceProvider.GetRequiredService<ReportEngine>();
 
-            var newUsersTask = reportEngine.GetNewUsersAsync(startingFrom);
-            var deactivatedUsersTask = reportEngine.GetDeactivatedUsersAsync(startingFrom);
-            await Task.WhenAll(newUsersTask, deactivatedUsersTask); // run both queries in parallel to save time
+                var newUsersTask = reportEngine.GetNewUsersAsync(startingFrom);
+                var deactivatedUsersTask = reportEngine.GetDeactivatedUsersAsync(startingFrom);
+                await Task.WhenAll(newUsersTask, deactivatedUsersTask); // run both queries in parallel to save time
+                _logger.LogInformation("Successfully generated report");
+                // send report to execs, .Result can be blocking, but we already awaited the tasks
+                await SendUserReportAsync(await newUsersTask, await deactivatedUsersTask);
+                _logger.LogInformation("Successfully sent user report");
 
-            // send report to execs, .Result can be blocking, but we already awaited the tasks
-            await SendUserReportAsync(await newUsersTask, await deactivatedUsersTask);
-
-            // save the current time, wait until next midnight, and run the report again - using the new cutoff date
-            startingFrom = DateTime.Now;
-            var nextMidnight = startingFrom.Date.AddDays(1) - startingFrom;
-            await Task.Delay(nextMidnight, stoppingToken);
+                // save the current time, wait until next midnight, and run the report again - using the new cutoff date
+                startingFrom = DateTime.Now;
+                var nextMidnight = startingFrom.Date.AddDays(1) - startingFrom;
+                await Task.Delay(nextMidnight, stoppingToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in report service");
+            }
         }
     }
 
     private Task SendUserReportAsync(IEnumerable<User> newUsers, IEnumerable<User> deactivatedUsers)
     {
-        // not part of this example
+        try
+        {
+            // not part of this example
+            return Task.CompletedTask;
+        }
+        catch(Exception ex)
+        {
+            _logger.LogError(ex, "Error sending report");
+        }
         return Task.CompletedTask;
     }
 }
@@ -80,23 +105,44 @@ public class DailyReportService : BackgroundService
 public class ReportEngine
 {
     private readonly MyContext _db;
+    private readonly ILogger _logger;
 
-    public ReportEngine(MyContext db) => _db = db;
+    public ReportEngine(MyContext db, ILogger logger)
+    {
+        _db = db;
+        _logger = logger;
+    }
 
     public async Task<IEnumerable<User>> GetNewUsersAsync(DateTime startingFrom)
     {
-        var newUsers = await this._db.Users
-            .Where(u => u.CreatedAt > startingFrom)
-            .ToListAsync();
-        return newUsers;
+        try
+        {
+            var newUsers = await this._db.Users
+                .Where(u => u.CreatedAt > startingFrom)
+                .ToListAsync();
+            return newUsers;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving new users");
+            return Enumerable.Empty<User>();
+        }
     }
 
     public async Task<IEnumerable<User>> GetDeactivatedUsersAsync(DateTime startingFrom)
     {
-        var deactivatedUsers = await this._db.Users
+        try
+        {
+            var deactivatedUsers = await this._db.Users
                 .Where(u => u.DeactivatedAt > startingFrom)
                 .ToListAsync();
-        return deactivatedUsers;
+            return deactivatedUsers;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving deactivated users");
+            return Enumerable.Empty<User>();
+        }
     }
 }
 
