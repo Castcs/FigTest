@@ -1,3 +1,7 @@
+# Cameron's Notes
+I tried to include comments and sources with .NET documentation where I thought it was worthwhile. At first I wasn't sure whether to include the comments all in code or only in GitHub, but I settled on a bit of both. I normally wouldn't leave such large comments at the top of files, but I thought it was relevant to include some of what my comments would be to a fellow engineer inside the code for the sake of this example.
+
+
 # FIG Code Review Assessment
 
 For this code review assessment, take a look at the example classes. Each file is self contained:
