@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace FIG.Assessment;
 /// <summary>
@@ -18,50 +19,63 @@ public class Example2 : Controller
 
     private readonly PasswordHasher<string> _hasher;
     private readonly Example2Context _dbContext;
+    private readonly ILogger _logger;
 
-    public Example2(Example2Context dbContext, PasswordHasher<string> hasher)
+    public Example2(Example2Context dbContext, PasswordHasher<string> hasher, ILogger logger)
     {
         _hasher = hasher;
         _dbContext = dbContext;
+        _logger = logger;
     }
 
     [HttpPost("login")]
     public async Task<IActionResult> LoginAsync([FromForm] LoginPostModel model)
     {
-        var user = await _dbContext.Example2Users.SingleOrDefaultAsync(u => u.UserName == model.UserName);
-
-        // first check user exists by the given username
-        if (user == null)
+        try
         {
-            return this.Redirect("/Error?msg=invalid_username");
+            _logger.LogInformation($"Attempting login for user: {model.UserName}");
+            var user = await _dbContext.Example2Users.SingleOrDefaultAsync(u => u.UserName == model.UserName);
+
+            // first check user exists by the given username
+            if (user == null)
+            {
+                return this.Redirect("/Error?msg=invalid_username");
+            }
+            _logger.LogInformation("User found, verifying password...");
+            // then check password is correct
+            var verifyStatus = _hasher.VerifyHashedPassword(user.UserName, user.HashedPassword, model.Password);
+            if (verifyStatus == PasswordVerificationResult.Failed)
+            {
+                return this.Redirect("/Error?msg=invalid_password");
+            }
+            _logger.LogInformation("Password verified, signing in...");
+            // if we get this far, we have a real user. sign them in
+            var userId = user.Id;
+            var claims = new List<Claim>
+            {
+                new Claim(ClaimTypes.NameIdentifier, userId.ToString()),
+            };
+            var identity = new ClaimsIdentity(claims);
+            var principal = new ClaimsPrincipal(identity);
+
+            await this.HttpContext.SignInAsync(principal);
+
+            _logger.LogInformation("Login successful, redirecting user");
+
+            // check return url to be safe, don't allow external return urls
+            if (Url.IsLocalUrl(model.ReturnUrl))
+            {
+                return Redirect(model.ReturnUrl);
+            }
+            else
+            {
+                return RedirectToAction("Index", "Home");
+            }
         }
-
-        // then check password is correct
-        var verifyStatus = _hasher.VerifyHashedPassword(user.UserName, user.HashedPassword, model.Password);
-        if (verifyStatus == PasswordVerificationResult.Failed)
+        catch (Exception ex) 
         {
-            return this.Redirect("/Error?msg=invalid_password");
-        }
-
-        // if we get this far, we have a real user. sign them in
-        var userId = user.Id;
-        var claims = new List<Claim>
-        {
-            new Claim(ClaimTypes.NameIdentifier, userId.ToString()),
-        };
-        var identity = new ClaimsIdentity(claims);
-        var principal = new ClaimsPrincipal(identity);
-
-        await this.HttpContext.SignInAsync(principal);
-
-        // check return url to be safe, don't allow external return urls
-        if (Url.IsLocalUrl(model.ReturnUrl))
-        {
-            return Redirect(model.ReturnUrl);
-        }
-        else
-        {
-            return RedirectToAction("Index", "Home");
+            _logger.LogError(ex, $"Error during loging for user: {model.UserName}");
+            return Redirect("/Error?msg=unexpected_error");
         }
     }
 }
